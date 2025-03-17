@@ -30,7 +30,7 @@ def get_ticker_suggestions(query):
             symbol = item["symbol"]
             name = item.get("shortname", "Unknown")
             if symbol.endswith(".NS") or symbol.endswith(".BO") or symbol.startswith("^"):
-                suggestions.append(name)
+                suggestions.append((symbol ,name))
         return suggestions
     except Exception as e:
         st.error(f"Error fetching suggestions: {e}")

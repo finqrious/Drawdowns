@@ -29,57 +29,131 @@ def get_ticker_suggestions(query):
         st.error(f"Error fetching suggestions: {e}")
         return []
 
+# CSS for the suggestion box
+st.markdown("""
+<style>
+    .suggestion-item {
+        padding: 8px 12px;
+        cursor: pointer;
+        background-color: #2c2c38;
+        border-bottom: 1px solid #3a3a48;
+    }
+    .suggestion-item:hover {
+        background-color: #3a3a48;
+    }
+    .suggestions-container {
+        border: 1px solid #3a3a48;
+        border-radius: 0 0 4px 4px;
+        max-height: 200px;
+        overflow-y: auto;
+        margin-top: -8px;
+        margin-bottom: 16px;
+    }
+    .stTextInput>div>div {
+        border-radius: 4px 4px 0 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("Indian Stock/Index Drawdown Analysis")
 
-# Create two columns for the input fields
-col1, col2 = st.columns([3, 1])
+# Initialize session state
+if 'selected_ticker' not in st.session_state:
+    st.session_state.selected_ticker = ""
+if 'selected_name' not in st.session_state:
+    st.session_state.selected_name = ""
+if 'search_query' not in st.session_state:
+    st.session_state.search_query = ""
+if 'show_suggestions' not in st.session_state:
+    st.session_state.show_suggestions = False
 
-# Text input for the stock search
-with col1:
-    user_input = st.text_input("Search for stock or index:", "").strip()
+# Search input
+user_input = st.text_input(
+    "Search for stock or index:", 
+    value=st.session_state.search_query,
+    key="search_input"
+)
 
-# Initialize session state for suggestions if it doesn't exist
-if 'suggestions' not in st.session_state:
-    st.session_state.suggestions = []
+# Update search query in session state
+if user_input != st.session_state.search_query:
+    st.session_state.search_query = user_input
+    st.session_state.show_suggestions = True
 
-# Update suggestions when user types
-if user_input:
-    st.session_state.suggestions = get_ticker_suggestions(user_input)
+# Get suggestions if needed
+suggestions = []
+if st.session_state.show_suggestions and user_input:
+    suggestions = get_ticker_suggestions(user_input)
 
-# Display suggestions in a selection box
-ticker_options = [(f"{name} ({symbol})", symbol) for symbol, name in st.session_state.suggestions]
-ticker_options = [("", "")] + ticker_options  # Add empty option
+# Display suggestions as clickable items
+if suggestions and st.session_state.show_suggestions:
+    suggestions_html = '<div class="suggestions-container">'
+    
+    for symbol, name in suggestions[:10]:  # Limit to top 10 results
+        display_text = f"{name} ({symbol})"
+        suggestions_html += f"""
+        <div class="suggestion-item" 
+             onclick="
+                document.querySelector('#search_input').value = '{name}';
+                document.querySelector('#manual_input').value = '{symbol}';
+                this.parentElement.style.display = 'none';
+             ">
+            {display_text}
+        </div>
+        """
+    
+    suggestions_html += '</div>'
+    st.markdown(suggestions_html, unsafe_allow_html=True)
 
-# Create a selectbox for the suggestions
-with col2:
-    selected_option = st.selectbox(
-        "Select stock:",
-        options=[option[0] for option in ticker_options],
-        index=0,
-        key="stock_selector"
-    )
+# Manual ticker input (hidden but updated by JavaScript)
+manual_ticker = st.text_input(
+    "Or enter ticker symbol directly:", 
+    value=st.session_state.selected_ticker,
+    key="manual_input"
+)
 
-# Get the ticker value from the selected option
-selected_ticker = ""
-for option_label, option_value in ticker_options:
-    if option_label == selected_option:
-        selected_ticker = option_value
-        break
-
-# Allow manual entry for indices or direct ticker input
-manual_ticker = st.text_input("Or enter ticker symbol directly:", "").strip().upper()
+# JavaScript to handle suggestion clicks
+st.markdown("""
+<script>
+    // This will run when a suggestion is clicked
+    document.addEventListener('DOMContentLoaded', function() {
+        const suggestionItems = document.querySelectorAll('.suggestion-item');
+        suggestionItems.forEach(item => {
+            item.addEventListener('click', function() {
+                // Hide suggestions after click
+                document.querySelector('.suggestions-container').style.display = 'none';
+                // Submit the form
+                setTimeout(() => {
+                    const buttons = document.querySelectorAll('button');
+                    for (const button of buttons) {
+                        if (button.innerText === 'Analyze') {
+                            button.click();
+                            break;
+                        }
+                    }
+                }, 100);
+            });
+        });
+    });
+</script>
+""", unsafe_allow_html=True)
 
 # Determine which ticker to use
 final_ticker = ""
-if selected_ticker:
-    final_ticker = selected_ticker
-elif manual_ticker:
-    final_ticker = index_mapping.get(manual_ticker, manual_ticker + ".NS")
+if manual_ticker:
+    final_ticker = index_mapping.get(manual_ticker, manual_ticker)
+    # Add .NS suffix for Indian stocks if not already present and not an index
+    if not any(x in final_ticker for x in ['.', '^']) and not final_ticker.endswith('.NS'):
+        final_ticker += ".NS"
 
 # Analysis button
-analyze_button = st.button("Analyze", type="primary")
+col1, col2 = st.columns([1, 6])
+with col1:
+    analyze_button = st.button("Analyze", type="primary")
 
 if analyze_button and final_ticker:
+    # Hide suggestions after analysis
+    st.session_state.show_suggestions = False
+    
     ticker = final_ticker
     
     st.write(f"**Using Ticker:** {ticker}")

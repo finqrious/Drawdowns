@@ -15,8 +15,8 @@ def screener_login():
     csrf_token = session.cookies.get("csrftoken") or soup.find("input", {"name": "csrfmiddlewaretoken"})["value"]
 
     credentials = {
-        "username": "your_email@example.com",  # Replace with your Screener login email
-        "password": "your_password",  # Replace with your Screener password
+        "username": "psuyog142@gmail.com",  # Replace with your Screener login email
+        "password": "Kalyan@123",  # Replace with your Screener password
         "csrfmiddlewaretoken": csrf_token
     }
 

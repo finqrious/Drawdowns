@@ -11,6 +11,45 @@ index_mapping = {
     "BSE SENSEX": "^BSESN"
 }
 
+def plot_stock_chart(ticker_symbol, period="max"):
+    """
+    Fetches stock data for a given Indian stock ticker symbol and plots a simple line chart.
+
+    Parameters:
+        ticker_symbol (str): Stock ticker symbol (e.g., "TCS.NS" for NSE, "RELIANCE.BO" for BSE).
+        period (str): Time period of the stock data (default is "max" to get all available data).
+    """
+
+    # Fetch stock data
+    stock = yf.Ticker(ticker_symbol)
+    data = stock.history(period=period)
+
+    # Ensure 'Close' column is float
+    data["Close"] = data["Close"].astype(float)
+
+    # Create figure
+    fig = go.Figure()
+    
+    # Add line trace for closing prices
+    fig.add_trace(go.Scatter(
+        x=data.index,
+        y=data["Close"],
+        mode='lines',
+        name="Closing Price",
+        line=dict(color='blue')
+    ))
+
+    # Customize layout
+    fig.update_layout(
+        title=f"{ticker_symbol} Stock Price History",
+        xaxis_title="Date",
+        yaxis_title="Stock Price (INR)",
+        xaxis_rangeslider_visible=False
+    )
+
+    # Show the chart
+    return fig
+
 st.title("Indian Stock/Index Drawdown Analysis")
 user_input = st.text_input("Enter Ticker Name:", "").strip().upper()
 
@@ -55,32 +94,7 @@ if user_input:
             drawdown_periods.append((start_date, df.index[-1]))
         
         # Create stock price chart with Plotly
-        fig1 = go.Figure()
-        
-        # Add closing price trace
-        fig1.add_trace(go.Scatter(
-            x=df.index, y=df['Close'], mode='lines', name="Closing Price", line=dict(color='blue')
-        ))
-        
-        # Add all-time high trace
-        fig1.add_trace(go.Scatter(
-            x=df.index, y=df['ATH'], mode='lines', name="All-Time High", line=dict(color='green', dash='dash')
-        ))
-        
-        # Highlight drawdown periods
-        for start, end in drawdown_periods:
-            fig1.add_vrect(
-                x0=start, x1=end, fillcolor="red", opacity=0.2, layer="below", line_width=0
-            )
-        
-        # Customize layout
-        fig1.update_layout(
-            title=f"{ticker} Price and All-Time High",
-            xaxis_title="Date",
-            yaxis_title="Price (INR)",
-            template="plotly_white",
-            hovermode="x unified"
-        )
+        fig1 = plot_stock_chart(ticker, "max")
         
         # Display the Plotly price chart
         st.plotly_chart(fig1, use_container_width=True)
@@ -137,4 +151,3 @@ if user_input:
                 })
             
             st.table(pd.DataFrame(stats_data))
-

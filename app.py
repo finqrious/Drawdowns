@@ -7,6 +7,9 @@ import numpy as np
 from datetime import datetime
 import requests
 
+# Set page config for wider layout
+st.set_page_config(layout="wide")
+
 # Expanded dictionary mapping for Indian indices
 index_mapping = {
     "NIFTY50": "^NSEI",
@@ -17,6 +20,9 @@ index_mapping = {
 # Function to fetch ticker suggestions from Yahoo Finance
 @st.cache_data(ttl=300)  # Cache results for 5 minutes
 def get_ticker_suggestions(query):
+    if len(query) < 3:
+        return []
+        
     url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
     headers = {"User-Agent": "Mozilla/5.0"}
     
@@ -29,32 +35,6 @@ def get_ticker_suggestions(query):
         st.error(f"Error fetching suggestions: {e}")
         return []
 
-# CSS for the suggestion box
-st.markdown("""
-<style>
-    .suggestion-item {
-        padding: 8px 12px;
-        cursor: pointer;
-        background-color: #2c2c38;
-        border-bottom: 1px solid #3a3a48;
-    }
-    .suggestion-item:hover {
-        background-color: #3a3a48;
-    }
-    .suggestions-container {
-        border: 1px solid #3a3a48;
-        border-radius: 0 0 4px 4px;
-        max-height: 200px;
-        overflow-y: auto;
-        margin-top: -8px;
-        margin-bottom: 16px;
-    }
-    .stTextInput>div>div {
-        border-radius: 4px 4px 0 0;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 st.title("Indian Stock/Index Drawdown Analysis")
 
 # Initialize session state
@@ -64,8 +44,12 @@ if 'selected_name' not in st.session_state:
     st.session_state.selected_name = ""
 if 'search_query' not in st.session_state:
     st.session_state.search_query = ""
-if 'show_suggestions' not in st.session_state:
-    st.session_state.show_suggestions = False
+
+# Function to handle stock selection
+def select_stock(ticker, name):
+    st.session_state.selected_ticker = ticker
+    st.session_state.selected_name = name
+    st.session_state.search_query = name
 
 # Search input
 user_input = st.text_input(
@@ -74,76 +58,39 @@ user_input = st.text_input(
     key="search_input"
 )
 
-# Update search query in session state
+# Auto-update search query in session state
 if user_input != st.session_state.search_query:
     st.session_state.search_query = user_input
-    st.session_state.show_suggestions = True
 
-# Get suggestions if needed
+# Get suggestions if query is 3+ characters
 suggestions = []
-if st.session_state.show_suggestions and user_input:
+if len(user_input) >= 3:
     suggestions = get_ticker_suggestions(user_input)
 
-# Display suggestions as clickable items
-if suggestions and st.session_state.show_suggestions:
-    suggestions_html = '<div class="suggestions-container">'
-    
-    for symbol, name in suggestions[:10]:  # Limit to top 10 results
+# Display suggestions as clickable buttons
+if suggestions:
+    for i, (symbol, name) in enumerate(suggestions[:10]):  # Limit to top 10 results
         display_text = f"{name} ({symbol})"
-        suggestions_html += f"""
-        <div class="suggestion-item" 
-             onclick="
-                document.querySelector('#search_input').value = '{name}';
-                document.querySelector('#manual_input').value = '{symbol}';
-                this.parentElement.style.display = 'none';
-             ">
-            {display_text}
-        </div>
-        """
-    
-    suggestions_html += '</div>'
-    st.markdown(suggestions_html, unsafe_allow_html=True)
+        if st.button(display_text, key=f"suggestion_{i}", use_container_width=True):
+            select_stock(symbol, name)
 
-# Manual ticker input (hidden but updated by JavaScript)
+# Manual ticker input as a fallback
 manual_ticker = st.text_input(
     "Or enter ticker symbol directly:", 
     value=st.session_state.selected_ticker,
     key="manual_input"
 )
 
-# JavaScript to handle suggestion clicks
-st.markdown("""
-<script>
-    // This will run when a suggestion is clicked
-    document.addEventListener('DOMContentLoaded', function() {
-        const suggestionItems = document.querySelectorAll('.suggestion-item');
-        suggestionItems.forEach(item => {
-            item.addEventListener('click', function() {
-                // Hide suggestions after click
-                document.querySelector('.suggestions-container').style.display = 'none';
-                // Submit the form
-                setTimeout(() => {
-                    const buttons = document.querySelectorAll('button');
-                    for (const button of buttons) {
-                        if (button.innerText === 'Analyze') {
-                            button.click();
-                            break;
-                        }
-                    }
-                }, 100);
-            });
-        });
-    });
-</script>
-""", unsafe_allow_html=True)
-
 # Determine which ticker to use
 final_ticker = ""
-if manual_ticker:
+if st.session_state.selected_ticker:
+    final_ticker = index_mapping.get(st.session_state.selected_ticker, st.session_state.selected_ticker)
+elif manual_ticker:
     final_ticker = index_mapping.get(manual_ticker, manual_ticker)
-    # Add .NS suffix for Indian stocks if not already present and not an index
-    if not any(x in final_ticker for x in ['.', '^']) and not final_ticker.endswith('.NS'):
-        final_ticker += ".NS"
+
+# Add .NS suffix for Indian stocks if needed
+if final_ticker and not any(x in final_ticker for x in ['.', '^']) and not final_ticker.endswith('.NS'):
+    final_ticker += ".NS"
 
 # Analysis button
 col1, col2 = st.columns([1, 6])
@@ -151,9 +98,6 @@ with col1:
     analyze_button = st.button("Analyze", type="primary")
 
 if analyze_button and final_ticker:
-    # Hide suggestions after analysis
-    st.session_state.show_suggestions = False
-    
     ticker = final_ticker
     
     st.write(f"**Using Ticker:** {ticker}")
@@ -196,29 +140,55 @@ if analyze_button and final_ticker:
         if in_drawdown:
             drawdown_periods.append((start_date, df.index[-1]))
         
-        # Create price chart with Matplotlib
-        fig1, ax1 = plt.subplots(figsize=(10, 6))
+        # Use the full width for charts
+        st.write("### Price and Drawdown Analysis")
         
-        # Plot price and ATH
-        ax1.plot(df.index, df['Close'], label='Close Price', color='blue')
-        ax1.plot(df.index, df['ATH'], label='All-Time High', color='green', linestyle='--')
+        # Create price chart with Plotly (instead of Matplotlib)
+        fig1 = go.Figure()
         
-        # Highlight drawdown periods
+        # Add price line
+        fig1.add_trace(go.Scatter(
+            x=df.index,
+            y=df['Close'],
+            mode='lines',
+            name='Close Price',
+            line=dict(color='blue')
+        ))
+        
+        # Add ATH line
+        fig1.add_trace(go.Scatter(
+            x=df.index,
+            y=df['ATH'],
+            mode='lines',
+            name='All-Time High',
+            line=dict(color='green', dash='dash')
+        ))
+        
+        # Add shaded regions for drawdown periods
         for start, end in drawdown_periods:
-            ax1.axvspan(start, end, alpha=0.2, color='red')
+            fig1.add_shape(
+                type="rect",
+                x0=start,
+                x1=end,
+                y0=0,
+                y1=1,
+                xref="x",
+                yref="paper",
+                fillcolor="rgba(255, 0, 0, 0.1)",
+                line=dict(width=0),
+                layer="below"
+            )
         
-        # Set labels and title
-        ax1.set_title(f"{ticker} Price and All-Time High")
-        ax1.set_xlabel("Date")
-        ax1.set_ylabel("Price")
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
-        # Adjust layout
-        plt.tight_layout()
-        
-        # Display the Matplotlib chart
-        st.pyplot(fig1)
+        # Update layout for price chart
+        fig1.update_layout(
+            title=f"{ticker} Price and All-Time High",
+            xaxis_title=None,  # Remove x-axis title for better alignment
+            yaxis_title="Price",
+            legend_title="Legend",
+            template="plotly_white",
+            margin=dict(l=0, r=0, t=40, b=0),
+            height=400
+        )
         
         # Create drawdown chart with Plotly
         fig2 = go.Figure()
@@ -258,15 +228,22 @@ if analyze_button and final_ticker:
         
         # Update layout for drawdown chart
         fig2.update_layout(
-            title=f"{ticker} Drawdowns",
+            title=None,  # No title needed since it's aligned with chart above
             xaxis_title="Date",
             yaxis_title="Drawdown (%)",
             legend_title="Legend",
             template="plotly_white",
-            hovermode="x unified"
+            hovermode="x unified",
+            margin=dict(l=0, r=0, t=0, b=30),
+            height=300
         )
         
-        # Display the Plotly chart
+        # Ensure the charts are perfectly aligned by linking their x-axes
+        fig1.update_layout(xaxis_range=[df.index.min(), df.index.max()])
+        fig2.update_layout(xaxis_range=[df.index.min(), df.index.max()])
+        
+        # Display the charts one above the other
+        st.plotly_chart(fig1, use_container_width=True)
         st.plotly_chart(fig2, use_container_width=True)
         
         # Display drawdown statistics

@@ -28,30 +28,33 @@ if user_input:
     else:
         st.success(f"Downloaded {len(stock_data)} rows of data.")
         
+        # Process the data
         df = stock_data[['Close']].copy()
         close_series = df['Close'].squeeze()
         df['ATH'] = close_series.cummax()
         df['Drawdown'] = (close_series - df['ATH']) / df['ATH']
         
+        # Define drawdown threshold
         threshold = -0.25
         df['In_Drawdown'] = df['Drawdown'] <= threshold
+        
+        # Find drawdown periods
         df['Drawdown_Start'] = df['In_Drawdown'] & ~df['In_Drawdown'].shift(1, fill_value=False)
         df['Drawdown_End'] = ~df['In_Drawdown'] & df['In_Drawdown'].shift(1, fill_value=False)
         
+        # Extract drawdown periods
+        drawdown_periods = []
+        start_idx = None
+        
+        # Using boolean indexing instead of iterating
         drawdown_starts = df.index[df['Drawdown_Start']].tolist()
-        drawdown_ends = []
+        drawdown_ends = df.index[df['Drawdown_End']].tolist()
         
-        # Find end dates for each drawdown period
-        current_start = None
-        for i, row in df.iterrows():
-            if row['Drawdown_Start']:
-                current_start = i
-            elif current_start is not None and not row['In_Drawdown']:
-                drawdown_ends.append(i)
-                current_start = None
-        
-        # If a drawdown period hasn't ended yet
+        # Handle the case where a drawdown is ongoing
         if len(drawdown_starts) > len(drawdown_ends):
+            # Find where the last drawdown starts
+            last_drawdown_start = drawdown_starts[-1]
+            # Add the last date as the end of this drawdown
             drawdown_ends.append(df.index[-1])
         
         # Create figure with secondary y-axis
@@ -69,23 +72,29 @@ if user_input:
         
         # Highlight drawdown periods
         for i, (start, end) in enumerate(zip(drawdown_starts, drawdown_ends)):
-            mask = (df.index >= start) & (df.index <= end)
-            period_df = df[mask]
-            
-            # Shade area for drawdown period
-            fig.add_trace(
-                go.Scatter(
-                    x=period_df.index,
-                    y=period_df['Close'],
-                    mode='lines',
-                    line=dict(width=0),
-                    showlegend=i==0,
-                    name='Drawdown Area',
-                    fillcolor='rgba(255, 0, 0, 0.2)',
-                    fill='tozeroy'
-                ),
-                secondary_y=False
+            # Create a polygon shape for the drawdown area
+            fig.add_shape(
+                type="rect",
+                x0=start, x1=end,
+                y0=df.loc[start:end, 'Close'].min() * 0.95,  # Add some padding
+                y1=df.loc[start:end, 'ATH'].max() * 1.05,  # Add some padding
+                fillcolor="rgba(255, 0, 0, 0.2)",
+                line=dict(width=0),
+                layer="below"
             )
+            
+            # Add a trace for the legend (invisible but needed for the legend)
+            if i == 0:  # Only add to legend once
+                fig.add_trace(
+                    go.Scatter(
+                        x=[None], y=[None],
+                        mode='lines',
+                        line=dict(color="rgba(255, 0, 0, 0.2)", width=10),
+                        name="Drawdown Period",
+                        showlegend=True
+                    ),
+                    secondary_y=False
+                )
         
         # Add drawdown percentage to secondary y-axis
         fig.add_trace(

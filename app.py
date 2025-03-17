@@ -4,44 +4,55 @@ import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
 from datetime import datetime
-from fuzzywuzzy import process  # For smart ticker search
+from fuzzywuzzy import process  # For intelligent ticker suggestions
 
-# Set Streamlit page config
+# Streamlit app configuration
 st.set_page_config(page_title="Stock Drawdown Analysis", layout="wide")
 
-# Load all available Indian stock & index tickers dynamically
+# Function to fetch all available Indian stock & index tickers dynamically
 @st.cache_data
 def fetch_all_tickers():
     """Fetch all NSE & BSE tickers dynamically from Yahoo Finance"""
     try:
-        nse_tickers = yf.Ticker("^NSEI").history(period="1d")  # Fetch Nifty tickers
-        bse_tickers = yf.Ticker("^BSESN").history(period="1d")  # Fetch Sensex tickers
+        # Predefined major indices
+        index_tickers = {
+            "NIFTY50": "^NSEI",
+            "BANKNIFTY": "^NSEBANK",
+            "SENSEX": "^BSESN",
+            "MIDCAP": "^NSEMDCP50",
+            "SMALLCAP": "^NSESC50",
+            "NIFTY NEXT 50": "^NSMIDCP",
+            "NIFTY 500": "^NSE500"
+        }
         
         # Dummy list for now (replace with API call to NSE/BSE tickers)
         stock_tickers = [
-            "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS", 
-            "NIFTY50", "SENSEX", "MIDCAP.NS", "SMALLCAP.NS", "BANKNIFTY"
+            "RELIANCE.NS", "TCS.NS", "INFY.NS", "HDFCBANK.NS", "ICICIBANK.NS",
+            "BAJFINANCE.NS", "SBIN.NS", "ITC.NS", "LT.NS", "MARUTI.NS"
         ]
-        return stock_tickers
+        
+        # Combine stock and index tickers
+        all_tickers = {**index_tickers, **{s.replace('.NS', ''): s for s in stock_tickers}}
+        return all_tickers
     except Exception as e:
         st.error(f"Error fetching tickers: {e}")
-        return []
+        return {}
 
-# Get tickers
+# Load all tickers dynamically
 all_tickers = fetch_all_tickers()
 
 # **Ticker Search Function**
 def suggest_ticker(query):
-    """Return best matching tickers from all_tickers list"""
+    """Return best matching tickers from the available list"""
     if not query:
         return []
-    return process.extract(query.upper(), all_tickers, limit=5)
+    return process.extract(query.upper(), all_tickers.keys(), limit=5)
 
 # **UI Elements**
-st.title("📉 Stock Drawdown Analysis (India)")
+st.title("📉 Indian Stock & Index Drawdown Analysis")
 
-# **Ticker Input with Smart Suggestions**
-query = st.text_input("🔍 Enter Stock/Index Name (3+ chars for suggestions):").strip()
+# **User Input for Stock/Index Name**
+query = st.text_input("🔍 Enter Stock/Index Name (min 3 chars for suggestions):").strip()
 
 if query and len(query) >= 3:
     suggestions = suggest_ticker(query)
@@ -53,8 +64,8 @@ else:
     selected_ticker = None
 
 if selected_ticker:
-    ticker = selected_ticker
-    st.subheader(f"📊 Analyzing: {ticker}")
+    ticker = all_tickers[selected_ticker]  # Get full Yahoo Finance ticker
+    st.subheader(f"📊 Analyzing: {selected_ticker} ({ticker})")
 
     # **Download Stock Data**
     with st.spinner(f"Fetching {ticker} data..."):
@@ -66,18 +77,23 @@ if selected_ticker:
         # **Create Drawdown DataFrame**
         df = stock_data[['Close']].copy()
         df['ATH'] = df['Close'].cummax()
+        
+        # Fix potential multi-dimensional assignment issue
         df['Drawdown'] = (df['Close'] - df['ATH']) / df['ATH']
-        threshold = 0.25
+        df['Drawdown'] = df['Drawdown'].astype(float)  # Ensure correct dtype
+        
+        threshold = 0.25  # 25% drawdown threshold
         df['In_Drawdown'] = df['Drawdown'] <= -threshold
         df['Drawdown_Start'] = (df['In_Drawdown'] != df['In_Drawdown'].shift(1)) & df['In_Drawdown']
         df['Drawdown_End'] = (df['In_Drawdown'] != df['In_Drawdown'].shift(-1)) & df['In_Drawdown']
 
+        # Identify drawdown periods
         drawdown_starts = df.index[df['Drawdown_Start']].tolist()
         drawdown_ends = df.index[df['Drawdown_End']].tolist()
         if len(drawdown_starts) > len(drawdown_ends):
             drawdown_ends.append(df.index[-1])
 
-        # **Drawdown Summary Table**
+        # **Create Drawdown Summary Table**
         summary_data = []
         for i in range(min(len(drawdown_starts), len(drawdown_ends))):
             start_date = drawdown_starts[i]
@@ -107,7 +123,7 @@ if selected_ticker:
         axes[0].plot(df.index, df['ATH'], label="All-Time High", color="green", linestyle="--")
         for i in range(min(len(drawdown_starts), len(drawdown_ends))):
             axes[0].axvspan(drawdown_starts[i], drawdown_ends[i], color="red", alpha=0.2)
-        axes[0].set_title(f"{ticker} Price & ATH")
+        axes[0].set_title(f"{selected_ticker} Price & ATH")
         axes[0].legend()
         axes[0].grid(True)
 
@@ -115,7 +131,7 @@ if selected_ticker:
         axes[1].plot(df.index, df['Drawdown'] * 100, color="blue")
         axes[1].axhline(y=-threshold * 100, color="red", linestyle="--", label=f"Drawdown Threshold (-{threshold*100:.0f}%)")
         axes[1].fill_between(df.index, df['Drawdown'] * 100, 0, where=(df['Drawdown'] <= -threshold), color="red", alpha=0.3)
-        axes[1].set_title(f"{ticker} Drawdowns from ATH")
+        axes[1].set_title(f"{selected_ticker} Drawdowns from ATH")
         axes[1].set_ylabel("Drawdown (%)")
         axes[1].legend()
         axes[1].grid(True)

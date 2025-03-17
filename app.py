@@ -1,8 +1,9 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import matplotlib.pyplot as plt
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import numpy as np
 from datetime import datetime
 
 # Expanded dictionary mapping for Indian indices
@@ -38,60 +39,51 @@ if user_input:
         threshold = -0.25
         df['In_Drawdown'] = df['Drawdown'] <= threshold
         
-        # Find drawdown periods
-        df['Drawdown_Start'] = df['In_Drawdown'] & ~df['In_Drawdown'].shift(1, fill_value=False)
-        df['Drawdown_End'] = ~df['In_Drawdown'] & df['In_Drawdown'].shift(1, fill_value=False)
+        # Simple way to get drawdown periods
+        drawdown_periods = []
+        in_drawdown = False
+        start_date = None
         
-        # Extract drawdown periods
-        drawdown_starts = df.index[df['Drawdown_Start']].tolist()
-        drawdown_ends = df.index[df['Drawdown_End']].tolist()
+        for date, value in df['In_Drawdown'].items():
+            if value and not in_drawdown:
+                # Start of a drawdown period
+                in_drawdown = True
+                start_date = date
+            elif not value and in_drawdown:
+                # End of a drawdown period
+                in_drawdown = False
+                drawdown_periods.append((start_date, date))
+                start_date = None
         
-        # Handle the case where drawdown is ongoing
-        if len(drawdown_starts) > len(drawdown_ends):
-            drawdown_ends.append(df.index[-1])
-            
-        # Create price chart
-        fig1 = go.Figure()
+        # If still in drawdown at the end
+        if in_drawdown:
+            drawdown_periods.append((start_date, df.index[-1]))
         
-        # Add price and ATH to price chart
-        fig1.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Close Price', line=dict(color='blue')))
-        fig1.add_trace(go.Scatter(x=df.index, y=df['ATH'], mode='lines', name='All-Time High', line=dict(color='green', dash='dash')))
+        # Create price chart with Matplotlib
+        fig1, ax1 = plt.subplots(figsize=(10, 6))
         
-        # Add shaded regions for drawdown periods
-        for i, (start, end) in enumerate(zip(drawdown_starts, drawdown_ends)):
-            fig1.add_shape(
-                type="rect",
-                x0=start,
-                x1=end,
-                y0=0,
-                y1=1,
-                xref="x",
-                yref="paper",
-                fillcolor="rgba(255, 0, 0, 0.1)",
-                line=dict(width=0),
-                layer="below"
-            )
-            
-        # Add an invisible trace for legend
-        fig1.add_trace(go.Scatter(
-            x=[None],
-            y=[None],
-            mode='lines',
-            line=dict(width=10, color='rgba(255, 0, 0, 0.1)'),
-            name='Drawdown Period'
-        ))
+        # Plot price and ATH
+        ax1.plot(df.index, df['Close'], label='Close Price', color='blue')
+        ax1.plot(df.index, df['ATH'], label='All-Time High', color='green', linestyle='--')
         
-        # Update layout for price chart
-        fig1.update_layout(
-            title=f"{ticker} Price and All-Time High",
-            xaxis_title="Date",
-            yaxis_title="Price",
-            legend_title="Legend",
-            template="plotly_white",
-            hovermode="x unified"
-        )
+        # Highlight drawdown periods
+        for start, end in drawdown_periods:
+            ax1.axvspan(start, end, alpha=0.2, color='red')
         
-        # Create drawdown chart
+        # Set labels and title
+        ax1.set_title(f"{ticker} Price and All-Time High")
+        ax1.set_xlabel("Date")
+        ax1.set_ylabel("Price")
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Adjust layout
+        plt.tight_layout()
+        
+        # Display the Matplotlib chart
+        st.pyplot(fig1)
+        
+        # Create drawdown chart with Plotly
         fig2 = go.Figure()
         
         # Add drawdown percentage
@@ -112,8 +104,8 @@ if user_input:
             line=dict(color='red', dash='dash')
         ))
         
-        # Add shaded regions for drawdown periods (same as in price chart)
-        for i, (start, end) in enumerate(zip(drawdown_starts, drawdown_ends)):
+        # Add shaded regions for drawdown periods
+        for start, end in drawdown_periods:
             fig2.add_shape(
                 type="rect",
                 x0=start,
@@ -137,35 +129,32 @@ if user_input:
             hovermode="x unified"
         )
         
-        # Display both charts
-        st.plotly_chart(fig1, use_container_width=True)
+        # Display the Plotly chart
         st.plotly_chart(fig2, use_container_width=True)
         
-        # Display drawdown statistics in a simplified way
-        if drawdown_starts:
+        # Display drawdown statistics
+        if drawdown_periods:
             st.subheader("Major Drawdown Periods (Below -25%)")
             
             # Create a list to store drawdown statistics
-            drawdown_stats = []
+            stats_data = []
             
-            for i, (start, end) in enumerate(zip(drawdown_starts, drawdown_ends)):
-                # Calculate duration in days
+            for start, end in drawdown_periods:
+                # Get data for this period
+                mask = (df.index >= start) & (df.index <= end)
+                period_df = df[mask]
+                
+                # Calculate statistics
+                max_drawdown = period_df['Drawdown'].min() * 100
                 duration = (end - start).days
                 
-                # Find the maximum drawdown in this period
-                period_mask = (df.index >= start) & (df.index <= end)
-                max_drawdown = df.loc[period_mask, 'Drawdown'].min() * 100
-                
-                # Determine if the drawdown is ongoing
-                is_ongoing = end == df.index[-1] and df.loc[end, 'In_Drawdown']
-                
                 # Add to statistics
-                drawdown_stats.append({
+                stats_data.append({
                     "Start Date": start.strftime('%Y-%m-%d'),
-                    "End Date": "Ongoing" if is_ongoing else end.strftime('%Y-%m-%d'),
+                    "End Date": end.strftime('%Y-%m-%d') if end != df.index[-1] else "Ongoing",
                     "Max Drawdown": f"{max_drawdown:.2f}%",
                     "Duration": f"{duration} days"
                 })
             
             # Display statistics as a table
-            st.table(pd.DataFrame(drawdown_stats))
+            st.table(pd.DataFrame(stats_data))

@@ -1,11 +1,10 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
-import requests
-from bs4 import BeautifulSoup
 
 # Expanded dictionary mapping for Indian indices
 index_mapping = {
@@ -40,99 +39,122 @@ if user_input:
         threshold = -0.25
         df['In_Drawdown'] = df['Drawdown'] <= threshold
         
-        # Fetch PE Ratio Data from Screener.in
-        session = requests.Session()
-        login_url = "https://www.screener.in/login/"
-        response = session.get(login_url)
-        soup = BeautifulSoup(response.text, "html.parser")
-        csrf_token = session.cookies.get("csrftoken") or soup.find("input", {"name": "csrfmiddlewaretoken"})["value"]
-
-        credentials = {
-            "username": "your_email@example.com",
-            "password": "your_password",
-            "csrfmiddlewaretoken": csrf_token
-        }
-
-        headers = {
-            "Referer": login_url,
-            "User-Agent": "Mozilla/5.0",
-            "X-CSRFToken": csrf_token,
-        }
-
-        login_response = session.post(login_url, data=credentials, headers=headers)
-
-        stock_id = "295"
-        api_url = f"https://www.screener.in/api/company/{stock_id}/chart/"
-
-        payload = {
-            "q": "Price to Earning-Median PE-EPS",
-            "days": 10000,
-            "consolidated": True
-        }
-
-        headers.update({
-            "Referer": f"https://www.screener.in/company/{stock_id}/",
-            "X-CSRFToken": session.cookies.get("csrftoken"),
-            "Cookie": f"csrftoken={session.cookies.get('csrftoken')}; sessionid={session.cookies.get('sessionid')}"
-        })
-
-        data_response = session.get(api_url, headers=headers, params=payload)
-
-        if data_response.status_code == 200:
-            data = data_response.json()
-            datasets = data.get("datasets", [])
-            stock_data_pe = []
-
-            for dataset in datasets:
-                metric = dataset.get("metric")
-                values = dataset.get("values", [])
-
-                df_pe = pd.DataFrame(values, columns=["Date", "Value"])
-                df_pe["Metric"] = metric
-                stock_data_pe.append(df_pe)
-
-            final_pe_df = pd.concat(stock_data_pe)
-            final_pe_df = final_pe_df.pivot(index="Date", columns="Metric", values="Value").reset_index()
-            final_pe_df = final_pe_df[["Date", "Price to Earning"]]
-            final_pe_df = final_pe_df.dropna(subset=["Price to Earning"])
-            final_pe_df["Date"] = pd.to_datetime(final_pe_df["Date"])
-            final_pe_df = final_pe_df.sort_values(by="Date")
+        # Simple way to get drawdown periods
+        drawdown_periods = []
+        in_drawdown = False
+        start_date = None
         
-        # Merge PE data with stock price data
-        df = df.merge(final_pe_df, left_index=True, right_on="Date", how="left")
-
-        # Create price & PE chart with Plotly
-        fig = go.Figure()
+        for date, value in df['In_Drawdown'].items():
+            if value and not in_drawdown:
+                # Start of a drawdown period
+                in_drawdown = True
+                start_date = date
+            elif not value and in_drawdown:
+                # End of a drawdown period
+                in_drawdown = False
+                drawdown_periods.append((start_date, date))
+                start_date = None
         
-        # Add stock price trace
-        fig.add_trace(go.Scatter(
-            x=df["Date"],
-            y=df["Close"],
-            mode='lines',
-            name="Closing Price",
-            line=dict(color='blue'),
-            yaxis="y1"
+        # If still in drawdown at the end
+        if in_drawdown:
+            drawdown_periods.append((start_date, df.index[-1]))
+        
+        # Create price chart with Matplotlib
+        fig1, ax1 = plt.subplots(figsize=(10, 6))
+        
+        # Plot price and ATH
+        ax1.plot(df.index, df['Close'], label='Close Price', color='blue')
+        ax1.plot(df.index, df['ATH'], label='All-Time High', color='green', linestyle='--')
+        
+        # Highlight drawdown periods
+        for start, end in drawdown_periods:
+            ax1.axvspan(start, end, alpha=0.2, color='red')
+        
+        # Set labels and title
+        ax1.set_title(f"{ticker} Price and All-Time High")
+        ax1.set_xlabel("Date")
+        ax1.set_ylabel("Price")
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # Adjust layout
+        plt.tight_layout()
+        
+        # Display the Matplotlib chart
+        st.pyplot(fig1)
+        
+        # Create drawdown chart with Plotly
+        fig2 = go.Figure()
+        
+        # Add drawdown percentage
+        fig2.add_trace(go.Scatter(
+            x=df.index, 
+            y=df['Drawdown'] * 100, 
+            mode='lines', 
+            name='Drawdown (%)', 
+            line=dict(color='red')
         ))
         
-        # Add PE Ratio trace
-        fig.add_trace(go.Scatter(
-            x=df["Date"],
-            y=df["Price to Earning"],
-            mode='lines',
-            name="PE Ratio",
-            line=dict(color='orange'),
-            yaxis="y2"
+        # Add threshold line
+        fig2.add_trace(go.Scatter(
+            x=df.index, 
+            y=[threshold * 100] * len(df), 
+            mode='lines', 
+            name='Threshold (-25%)', 
+            line=dict(color='red', dash='dash')
         ))
-
-        # Customize layout
-        fig.update_layout(
-            title=f"{ticker} Stock Price & PE Ratio",
+        
+        # Add shaded regions for drawdown periods
+        for start, end in drawdown_periods:
+            fig2.add_shape(
+                type="rect",
+                x0=start,
+                x1=end,
+                y0=0,
+                y1=1,
+                xref="x",
+                yref="paper",
+                fillcolor="rgba(255, 0, 0, 0.1)",
+                line=dict(width=0),
+                layer="below"
+            )
+        
+        # Update layout for drawdown chart
+        fig2.update_layout(
+            title=f"{ticker} Drawdowns",
             xaxis_title="Date",
-            yaxis=dict(title="Stock Price (INR)", side="left", showgrid=False),
-            yaxis2=dict(title="PE Ratio", side="right", overlaying="y", showgrid=False),
-            legend=dict(x=0.02, y=0.98),
-            xaxis_rangeslider_visible=False
+            yaxis_title="Drawdown (%)",
+            legend_title="Legend",
+            template="plotly_white",
+            hovermode="x unified"
         )
-
-        # Show the Plotly chart
-        st.plotly_chart(fig, use_container_width=True)
+        
+        # Display the Plotly chart
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        # Display drawdown statistics
+        if drawdown_periods:
+            st.subheader("Major Drawdown Periods (Below -25%)")
+            
+            # Create a list to store drawdown statistics
+            stats_data = []
+            
+            for start, end in drawdown_periods:
+                # Get data for this period
+                mask = (df.index >= start) & (df.index <= end)
+                period_df = df[mask]
+                
+                # Calculate statistics
+                max_drawdown = period_df['Drawdown'].min() * 100
+                duration = (end - start).days
+                
+                # Add to statistics
+                stats_data.append({
+                    "Start Date": start.strftime('%Y-%m-%d'),
+                    "End Date": end.strftime('%Y-%m-%d') if end != df.index[-1] else "Ongoing",
+                    "Max Drawdown": f"{max_drawdown:.2f}%",
+                    "Duration": f"{duration} days"
+                })
+            
+            # Display statistics as a table
+            st.table(pd.DataFrame(stats_data))

@@ -2,6 +2,8 @@ streamlit
 yfinance
 pandas
 matplotlib
-datetime
 fuzzywuzzy
 plotly
+numpy
+requests
+beautifulsoup4

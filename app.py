@@ -16,7 +16,7 @@ index_mapping = {
 }
 
 # Function to fetch ticker suggestions from Yahoo Finance
-@st.cache_data(ttl=60)  # Cache results for 1 minute - shorter to be more responsive
+@st.cache_data(ttl=60)
 def get_ticker_suggestions(query):
     url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
     headers = {"User-Agent": "Mozilla/5.0"}
@@ -24,16 +24,16 @@ def get_ticker_suggestions(query):
     try:
         response = requests.get(url, headers=headers)
         data = response.json()
-        # Filter to only include Indian stocks (.NS, .BO) and indices (^)
+        
         suggestions = []
         for item in data.get("quotes", []):
-            symbol = item["symbol"]
             name = item.get("shortname", "Unknown")
+            symbol = item["symbol"]
+            
             if symbol.endswith(".NS") or symbol.endswith(".BO") or symbol.startswith("^"):
                 suggestions.append((symbol, name))
         return suggestions
     except Exception as e:
-        st.error(f"Error fetching suggestions: {e}")
         return []
 
 # Custom CSS for better suggestion display
@@ -84,7 +84,6 @@ def select_stock(ticker, name):
 # Function to update suggestions
 def update_suggestions():
     query = st.session_state.search_query
-    # Only update if query has 3+ characters and not too recently updated (to avoid API rate limits)
     if len(query) >= 3 and time.time() - st.session_state.last_update > 0.5:
         st.session_state.suggestions = get_ticker_suggestions(query)
         st.session_state.last_update = time.time()
@@ -92,31 +91,19 @@ def update_suggestions():
         st.session_state.suggestions = []
 
 # Search input with callback
-search_input = st.text_input(
+st.text_input(
     "Search for stock or index:", 
     value=st.session_state.search_query,
-    key="search_input",
+    key="search_query",
     on_change=update_suggestions
 )
 
-# Auto-update search query in session state
-if search_input != st.session_state.search_query:
-    st.session_state.search_query = search_input
-    update_suggestions()
-
-# Display suggestions as clickable items
+# Display suggestions dynamically
 if st.session_state.suggestions:
     st.write("**Suggestions:**")
     for i, (symbol, name) in enumerate(st.session_state.suggestions[:10]):  # Limit to top 10 results
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            display_text = f"{name}"
-            if st.button(display_text, key=f"suggestion_name_{i}"):
-                select_stock(symbol, name)
-        with col2:
-            ticker_text = f"{symbol}"
-            if st.button(ticker_text, key=f"suggestion_symbol_{i}"):
-                select_stock(symbol, name)
+        if st.button(name, key=f"suggestion_{i}"):
+            select_stock(symbol, name)
 
 # Manual ticker input as a fallback
 manual_ticker = st.text_input(
@@ -124,160 +111,3 @@ manual_ticker = st.text_input(
     value=st.session_state.selected_ticker,
     key="manual_input"
 )
-
-# Determine which ticker to use
-final_ticker = ""
-if st.session_state.selected_ticker:
-    final_ticker = index_mapping.get(st.session_state.selected_ticker, st.session_state.selected_ticker)
-elif manual_ticker:
-    final_ticker = index_mapping.get(manual_ticker, manual_ticker)
-
-# Add .NS suffix for Indian stocks if needed
-if final_ticker and not any(x in final_ticker for x in ['.', '^']) and not final_ticker.endswith('.NS'):
-    final_ticker += ".NS"
-
-# Analysis button
-analyze_button = st.button("Analyze", type="primary")
-
-if analyze_button and final_ticker:
-    ticker = final_ticker
-    
-    st.write(f"**Using Ticker:** {ticker}")
-    
-    with st.spinner("Downloading data..."):
-        stock_data = yf.download(ticker, period="max")
-    
-    if stock_data.empty:
-        st.error("Error: Invalid ticker or no data available.")
-    else:
-        st.success(f"Downloaded {len(stock_data)} rows of data.")
-        
-        # Process the data
-        df = stock_data[['Close']].copy()
-        close_series = df['Close'].squeeze()
-        df['ATH'] = close_series.cummax()
-        df['Drawdown'] = (close_series - df['ATH']) / df['ATH']
-        
-        # Define drawdown threshold
-        threshold = -0.25
-        df['In_Drawdown'] = df['Drawdown'] <= threshold
-        
-        # Simple way to get drawdown periods
-        drawdown_periods = []
-        in_drawdown = False
-        start_date = None
-        
-        for date, value in df['In_Drawdown'].items():
-            if value and not in_drawdown:
-                # Start of a drawdown period
-                in_drawdown = True
-                start_date = date
-            elif not value and in_drawdown:
-                # End of a drawdown period
-                in_drawdown = False
-                drawdown_periods.append((start_date, date))
-                start_date = None
-        
-        # If still in drawdown at the end
-        if in_drawdown:
-            drawdown_periods.append((start_date, df.index[-1]))
-        
-        # Create price chart with Matplotlib
-        fig1, ax1 = plt.subplots(figsize=(10, 6))
-        
-        # Plot price and ATH
-        ax1.plot(df.index, df['Close'], label='Close Price', color='blue')
-        ax1.plot(df.index, df['ATH'], label='All-Time High', color='green', linestyle='--')
-        
-        # Highlight drawdown periods
-        for start, end in drawdown_periods:
-            ax1.axvspan(start, end, alpha=0.2, color='red')
-        
-        # Set labels and title
-        ax1.set_title(f"{ticker} Price and All-Time High")
-        ax1.set_xlabel("Date")
-        ax1.set_ylabel("Price")
-        ax1.legend()
-        ax1.grid(True, alpha=0.3)
-        
-        # Adjust layout
-        plt.tight_layout()
-        
-        # Display the Matplotlib chart
-        st.pyplot(fig1)
-        
-        # Create drawdown chart with Plotly
-        fig2 = go.Figure()
-        
-        # Add drawdown percentage
-        fig2.add_trace(go.Scatter(
-            x=df.index, 
-            y=df['Drawdown'] * 100, 
-            mode='lines', 
-            name='Drawdown (%)', 
-            line=dict(color='red')
-        ))
-        
-        # Add threshold line
-        fig2.add_trace(go.Scatter(
-            x=df.index, 
-            y=[threshold * 100] * len(df), 
-            mode='lines', 
-            name='Threshold (-25%)', 
-            line=dict(color='red', dash='dash')
-        ))
-        
-        # Add shaded regions for drawdown periods
-        for start, end in drawdown_periods:
-            fig2.add_shape(
-                type="rect",
-                x0=start,
-                x1=end,
-                y0=0,
-                y1=1,
-                xref="x",
-                yref="paper",
-                fillcolor="rgba(255, 0, 0, 0.1)",
-                line=dict(width=0),
-                layer="below"
-            )
-        
-        # Update layout for drawdown chart
-        fig2.update_layout(
-            title=f"{ticker} Drawdowns",
-            xaxis_title="Date",
-            yaxis_title="Drawdown (%)",
-            legend_title="Legend",
-            template="plotly_white",
-            hovermode="x unified"
-        )
-        
-        # Display the Plotly chart
-        st.plotly_chart(fig2, use_container_width=True)
-        
-        # Display drawdown statistics
-        if drawdown_periods:
-            st.subheader("Major Drawdown Periods (Below -25%)")
-            
-            # Create a list to store drawdown statistics
-            stats_data = []
-            
-            for start, end in drawdown_periods:
-                # Get data for this period
-                mask = (df.index >= start) & (df.index <= end)
-                period_df = df[mask]
-                
-                # Calculate statistics
-                max_drawdown = period_df['Drawdown'].min() * 100
-                duration = (end - start).days
-                
-                # Add to statistics
-                stats_data.append({
-                    "Start Date": start.strftime('%Y-%m-%d'),
-                    "End Date": end.strftime('%Y-%m-%d') if end != df.index[-1] else "Ongoing",
-                    "Max Drawdown": f"{max_drawdown:.2f}%",
-                    "Duration": f"{duration} days"
-                })
-            
-            # Display statistics as a table
-            st.table(pd.DataFrame(stats_data))

@@ -43,82 +43,111 @@ if user_input:
         df['Drawdown_End'] = ~df['In_Drawdown'] & df['In_Drawdown'].shift(1, fill_value=False)
         
         # Extract drawdown periods
-        drawdown_periods = []
-        start_idx = None
-        
-        # Using boolean indexing instead of iterating
         drawdown_starts = df.index[df['Drawdown_Start']].tolist()
         drawdown_ends = df.index[df['Drawdown_End']].tolist()
         
         # Handle the case where a drawdown is ongoing
         if len(drawdown_starts) > len(drawdown_ends):
-            # Find where the last drawdown starts
-            last_drawdown_start = drawdown_starts[-1]
-            # Add the last date as the end of this drawdown
             drawdown_ends.append(df.index[-1])
         
-        # Create figure with secondary y-axis
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        # Create two separate figures
+        # Figure 1: Price and ATH
+        fig1 = go.Figure()
         
-        # Add price and ATH to primary y-axis
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Close Price', line=dict(color='blue')),
-            secondary_y=False
-        )
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['ATH'], mode='lines', name='All-Time High', line=dict(color='green', dash='dash')),
-            secondary_y=False
-        )
+        # Add price and ATH
+        fig1.add_trace(go.Scatter(x=df.index, y=df['Close'], mode='lines', name='Close Price', line=dict(color='blue')))
+        fig1.add_trace(go.Scatter(x=df.index, y=df['ATH'], mode='lines', name='All-Time High', line=dict(color='green', dash='dash')))
         
-        # Highlight drawdown periods
+        # Highlight drawdown periods in the price chart
         for i, (start, end) in enumerate(zip(drawdown_starts, drawdown_ends)):
-            # Create a polygon shape for the drawdown area
-            fig.add_shape(
+            # Add shaded area for drawdown period
+            fig1.add_shape(
                 type="rect",
                 x0=start, x1=end,
-                y0=df.loc[start:end, 'Close'].min() * 0.95,  # Add some padding
-                y1=df.loc[start:end, 'ATH'].max() * 1.05,  # Add some padding
-                fillcolor="rgba(255, 0, 0, 0.2)",
+                y0=0,  # From bottom of chart
+                y1=1,   # To top of chart
+                xref="x", yref="paper",
+                fillcolor="rgba(255, 0, 0, 0.1)",
                 line=dict(width=0),
                 layer="below"
             )
-            
-            # Add a trace for the legend (invisible but needed for the legend)
-            if i == 0:  # Only add to legend once
-                fig.add_trace(
-                    go.Scatter(
-                        x=[None], y=[None],
-                        mode='lines',
-                        line=dict(color="rgba(255, 0, 0, 0.2)", width=10),
-                        name="Drawdown Period",
-                        showlegend=True
-                    ),
-                    secondary_y=False
-                )
         
-        # Add drawdown percentage to secondary y-axis
-        fig.add_trace(
-            go.Scatter(x=df.index, y=df['Drawdown'] * 100, mode='lines', name='Drawdown (%)', line=dict(color='red')),
-            secondary_y=True
+        # Add a trace for the legend (invisible but needed for the legend)
+        fig1.add_trace(
+            go.Scatter(
+                x=[None], y=[None],
+                mode='lines',
+                line=dict(color="rgba(255, 0, 0, 0.2)", width=10),
+                name="Drawdown Period",
+                showlegend=True
+            )
         )
         
-        # Add threshold line to secondary y-axis
-        fig.add_trace(
-            go.Scatter(x=df.index, y=[threshold * 100] * len(df), mode='lines', name='Threshold (-25%)', 
-                      line=dict(color='red', dash='dash')),
-            secondary_y=True
-        )
-        
-        # Update layout and axes titles
-        fig.update_layout(
-            title=f"{ticker} Price, ATH & Drawdowns",
+        # Update layout for figure 1
+        fig1.update_layout(
+            title=f"{ticker} Price and All-Time High",
+            xaxis_title="Date",
+            yaxis_title="Price",
             legend_title="Legend",
             template="plotly_white",
             hovermode="x unified"
         )
         
-        fig.update_xaxes(title_text="Date")
-        fig.update_yaxes(title_text="Price", secondary_y=False)
-        fig.update_yaxes(title_text="Drawdown (%)", secondary_y=True)
+        # Figure 2: Drawdowns
+        fig2 = go.Figure()
         
-        st.plotly_chart(fig, use_container_width=True)
+        # Add drawdown percentage
+        fig2.add_trace(go.Scatter(x=df.index, y=df['Drawdown'] * 100, mode='lines', name='Drawdown (%)', line=dict(color='red')))
+        
+        # Add threshold line
+        fig2.add_trace(go.Scatter(x=df.index, y=[threshold * 100] * len(df), mode='lines', name='Threshold (-25%)', 
+                      line=dict(color='red', dash='dash')))
+        
+        # Highlight drawdown periods in the drawdown chart
+        for i, (start, end) in enumerate(zip(drawdown_starts, drawdown_ends)):
+            # Add shaded area for drawdown period
+            fig2.add_shape(
+                type="rect",
+                x0=start, x1=end,
+                y0=0,  # From bottom of chart
+                y1=1,   # To top of chart
+                xref="x", yref="paper",
+                fillcolor="rgba(255, 0, 0, 0.1)",
+                line=dict(width=0),
+                layer="below"
+            )
+        
+        # Update layout for figure 2
+        fig2.update_layout(
+            title=f"{ticker} Drawdowns",
+            xaxis_title="Date",
+            yaxis_title="Drawdown (%)",
+            legend_title="Legend",
+            template="plotly_white",
+            hovermode="x unified"
+        )
+        
+        # Display both charts
+        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        # Display drawdown statistics
+        if drawdown_starts:
+            st.subheader("Major Drawdown Periods (Below -25%)")
+            drawdown_stats = []
+            
+            for i, (start, end) in enumerate(zip(drawdown_starts, drawdown_ends)):
+                period_df = df.loc[start:end]
+                max_drawdown = period_df['Drawdown'].min() * 100
+                duration = (end - start).days
+                
+                recovery = "Ongoing" if end == df.index[-1] and period_df.iloc[-1]['Drawdown'] <= threshold else f"{duration} days"
+                
+                drawdown_stats.append({
+                    "Start": start.strftime('%Y-%m-%d'),
+                    "End": end.strftime('%Y-%m-%d') if end != df.index[-1] or period_df.iloc[-1]['Drawdown'] > threshold else "Ongoing",
+                    "Max Drawdown": f"{max_drawdown:.2f}%",
+                    "Duration": recovery
+                })
+            
+            st.table(pd.DataFrame(drawdown_stats))

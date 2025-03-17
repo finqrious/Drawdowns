@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 import numpy as np
 from datetime import datetime
+import requests
 
 # Expanded dictionary mapping for Indian indices
 index_mapping = {
@@ -13,11 +14,73 @@ index_mapping = {
     "BSE SENSEX": "^BSESN"
 }
 
-st.title("Indian Stock/Index Drawdown Analysis")
-user_input = st.text_input("Enter Ticker Name:", "").strip().upper()
+# Function to fetch ticker suggestions from Yahoo Finance
+@st.cache_data(ttl=300)  # Cache results for 5 minutes
+def get_ticker_suggestions(query):
+    url = f"https://query2.finance.yahoo.com/v1/finance/search?q={query}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        response = requests.get(url, headers=headers)
+        data = response.json()
+        suggestions = [(item["symbol"], item.get("shortname", "Unknown")) for item in data.get("quotes", [])]
+        return suggestions
+    except Exception as e:
+        st.error(f"Error fetching suggestions: {e}")
+        return []
 
+st.title("Indian Stock/Index Drawdown Analysis")
+
+# Create two columns for the input fields
+col1, col2 = st.columns([3, 1])
+
+# Text input for the stock search
+with col1:
+    user_input = st.text_input("Search for stock or index:", "").strip()
+
+# Initialize session state for suggestions if it doesn't exist
+if 'suggestions' not in st.session_state:
+    st.session_state.suggestions = []
+
+# Update suggestions when user types
 if user_input:
-    ticker = index_mapping.get(user_input, user_input + ".NS")
+    st.session_state.suggestions = get_ticker_suggestions(user_input)
+
+# Display suggestions in a selection box
+ticker_options = [(f"{name} ({symbol})", symbol) for symbol, name in st.session_state.suggestions]
+ticker_options = [("", "")] + ticker_options  # Add empty option
+
+# Create a selectbox for the suggestions
+with col2:
+    selected_option = st.selectbox(
+        "Select stock:",
+        options=[option[0] for option in ticker_options],
+        index=0,
+        key="stock_selector"
+    )
+
+# Get the ticker value from the selected option
+selected_ticker = ""
+for option_label, option_value in ticker_options:
+    if option_label == selected_option:
+        selected_ticker = option_value
+        break
+
+# Allow manual entry for indices or direct ticker input
+manual_ticker = st.text_input("Or enter ticker symbol directly:", "").strip().upper()
+
+# Determine which ticker to use
+final_ticker = ""
+if selected_ticker:
+    final_ticker = selected_ticker
+elif manual_ticker:
+    final_ticker = index_mapping.get(manual_ticker, manual_ticker + ".NS")
+
+# Analysis button
+analyze_button = st.button("Analyze", type="primary")
+
+if analyze_button and final_ticker:
+    ticker = final_ticker
     
     st.write(f"**Using Ticker:** {ticker}")
     

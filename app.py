@@ -80,7 +80,7 @@ def analyze_stock(ticker):
         drawdown_periods.append((start_date, df.index[-1]))
     
     # Create price chart with Matplotlib
-    fig1, ax1 = plt.subplots(figsize=(10, 6))
+    fig1, ax1 = plt.subplots(figsize=(12, 6))
     
     # Plot price and ATH
     ax1.plot(df.index, df['Close'], label='Close Price', color='blue')
@@ -97,11 +97,17 @@ def analyze_stock(ticker):
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
-    # Adjust layout
-    plt.tight_layout()
+    # Add some padding to x-axis
+    # For price chart (less padding)
+    date_range = df.index[-1] - df.index[0]
+    padding = pd.Timedelta(days=int(date_range.days * 0.02))  # 2% padding
+    ax1.set_xlim(df.index[0] - padding, df.index[-1] + padding)
     
-    # Display the Matplotlib chart
-    st.pyplot(fig1)
+    # Adjust layout for better display
+    plt.tight_layout(pad=2.0)  # Increase padding around the plot
+    
+    # Display the Matplotlib chart with full width
+    st.pyplot(fig1, use_container_width=True)
     
     # Create drawdown chart with Plotly
     fig2 = go.Figure()
@@ -139,17 +145,35 @@ def analyze_stock(ticker):
             layer="below"
         )
     
-    # Update layout for drawdown chart
+    # Update layout for drawdown chart (more padding on right)
     fig2.update_layout(
         title=f"{ticker} Drawdowns",
         xaxis_title="Date",
         yaxis_title="Drawdown (%)",
-        legend_title="Legend",
         template="plotly_white",
-        hovermode="x unified"
+        hovermode="x unified",
+        height=450,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ),
+        margin=dict(l=50, r=0, t=50, b=50),  # Added left margin for y-axis label
+        yaxis=dict(
+            title=dict(
+                text="Drawdown (%)",
+                standoff=0  # Adjust the distance of the label from the axis
+            )
+        ),
+        xaxis=dict(
+            range=[df.index[0] - padding, df.index[-1] + padding * 2],
+            rangeslider=dict(visible=False)
+        )
     )
     
-    # Display the Plotly chart
+    # Display the Plotly chart with full width
     st.plotly_chart(fig2, use_container_width=True)
     
     # Display drawdown statistics
@@ -201,55 +225,76 @@ st.markdown("""
 
 st.title("Indian Stock/Index Drawdown Analysis")
 
-# Initialize session state
-if 'selected_ticker' not in st.session_state:
-    st.session_state.selected_ticker = ""
-if 'selected_name' not in st.session_state:
-    st.session_state.selected_name = ""
-if 'search_query' not in st.session_state:
-    st.session_state.search_query = ""
-if 'suggestions' not in st.session_state:
-    st.session_state.suggestions = []
-if 'last_update' not in st.session_state:
-    st.session_state.last_update = 0
-if 'analyze_flag' not in st.session_state:
-    st.session_state.analyze_flag = False
+# Move init_session_state definition to the top, after imports
+def init_session_state():
+    if 'selected_ticker' not in st.session_state:
+        st.session_state.selected_ticker = ""
+    if 'selected_name' not in st.session_state:
+        st.session_state.selected_name = ""
+    if 'search_query' not in st.session_state:
+        st.session_state.search_query = ""
+    if 'suggestions' not in st.session_state:
+        st.session_state.suggestions = []
+    if 'last_search_time' not in st.session_state:
+        st.session_state.last_search_time = 0
+    if 'analyze_flag' not in st.session_state:
+        st.session_state.analyze_flag = False
+
+# Initialize session state at the start
+init_session_state()
 
 # Function to handle stock selection
 def select_stock(ticker, name):
     st.session_state.selected_ticker = ticker
     st.session_state.selected_name = name
-    st.session_state.search_query = name
     st.session_state.suggestions = []  # Clear suggestions after selection
     st.session_state.analyze_flag = True  # Set flag to trigger analysis
+    # We'll use a different approach to reset the search
+
+# Add this function for handling search input changes
+def on_search_change():
+    # Get the current query from the widget's value
+    query = st.session_state.search_query
+    current_time = time.time()
+    
+    # Debounce the search
+    if current_time - st.session_state.last_search_time > 0.3 and len(query) >= 2:
+        st.session_state.suggestions = get_ticker_suggestions(query)
+        st.session_state.last_search_time = current_time
+    elif len(query) < 2:
+        st.session_state.suggestions = []
 
 # Create a container for the search and suggestions
 search_container = st.container()
 
+# Remove the duplicate init_session_state call in the search container
 with search_container:
-    # Search input
-    search_input = st.text_input(
-        "Search for stock or index:", 
-        value=st.session_state.search_query,
-        key="search_input"
+    # Remove this line as we already initialized at the top
+    # init_session_state()
+    
+    # Search input with callback
+    st.text_input(
+        "Search for stock or index:",
+        key="search_query",
+        on_change=on_search_change
     )
     
-    # Update search query in session state
-    if search_input != st.session_state.search_query:
-        st.session_state.search_query = search_input
-        # Only fetch suggestions if query has 3+ characters
-        if len(search_input) >= 3:
-            st.session_state.suggestions = get_ticker_suggestions(search_input)
-        else:
-            st.session_state.suggestions = []
-    
-    # Display suggestions
+    # Display suggestions in a more compact way
     if st.session_state.suggestions:
-        suggestion_container = st.container()
-        with suggestion_container:
-            for i, (symbol, name) in enumerate(st.session_state.suggestions[:10]):  # Limit to top 10 results
-                if st.button(name, key=f"suggestion_{i}", use_container_width=True):
+        cols = st.columns(2)  # Create 2 columns for suggestions
+        for i, (symbol, name) in enumerate(st.session_state.suggestions[:8]):
+            col_idx = i % 2
+            with cols[col_idx]:
+                if st.button(
+                    f"{name} ({symbol})",
+                    key=f"suggestion_{i}",
+                    use_container_width=True,
+                    type="secondary"
+                ):
+                    # Don't try to modify search_query here
                     select_stock(symbol, name)
+                    # Remove this line that's causing the error
+                    # st.session_state.search_query = ""
 
 # Manual ticker input as a fallback
 manual_ticker = st.text_input(
